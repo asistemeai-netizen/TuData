@@ -1,0 +1,41 @@
+# ============================================================
+# TuData — Document Processing Pipeline
+# Apache-2.0 License — 2026
+# ============================================================
+
+# ── PDF rendering ──────────────────────────────────────────
+pymupdf>=1.24.0               # High-quality PDF-to-image (fitz)
+
+# ── Layout Detection (Surya) ───────────────────────────────
+ultralytics>=8.3.0             # YOLOv8 / YOLOv11 inference engine
+
+# ── Image processing ───────────────────────────────────────
+opencv-python-headless>=4.9.0
+Pillow>=10.3.0
+
+# ── OCR Engine (Chandra) ───────────────────────────────────
+paddlepaddle>=3.0.0           # PaddlePaddle CPU wheel
+paddleocr>=3.0.0              # PP-OCRv5 + PP-StructureV3
+
+# ── LLM / Vision fallback + Extraction (Forge Extract) ────
+google-generativeai>=0.8.0    # Gemini 2.0 Flash SDK
+pydantic>=2.7.0               # Strict schema enforcement
+
+# ── Async orchestration & CLI ──────────────────────────────
+aiofiles>=23.2.0
+python-dotenv>=1.0.0
+
+# ── Logging ────────────────────────────────────────────────
+loguru>=0.7.2
+
+# ── Optional: Ollama local LLM fallback ────────────────────
+# ollama>=0.3.0
+
+# ── Web Server (SPA + API) ─────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9      # Required for FastAPI file uploads
+
+# ── Testing ────────────────────────────────────────────────
+pytest>=8.2.0
+pytest-asyncio>=0.23.0

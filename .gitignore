@@ -1,0 +1,42 @@
+# Credentials — never commit these
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# Model weights (large binaries)
+*.pt
+*.pth
+*.onnx
+*.ckpt
+models/
+
+# Pipeline outputs
+results/
+artifacts/
+uploads/
+
+# Temp files
+*.tmp
+*.log
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+*.swp

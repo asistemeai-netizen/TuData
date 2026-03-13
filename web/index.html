@@ -1,0 +1,1434 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TuData — Document Intelligence Pipeline</title>
+  <meta name="description" content="Pipeline local de procesamiento de documentos: detección de layout, OCR, ensamblaje Markdown y extracción JSON estructurada." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Variables ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      /* Shared Accent Palette */
+      --blue:         #3b82f6;
+      --purple:       #8b5cf6;
+      --cyan:         #06b6d4;
+      --green:        #10b981;
+      --orange:       #f59e0b;
+      --red:          #ef4444;
+
+      /* Dark Mode Base (Default) */
+      --bg-base:      #09090b;
+      --bg-surface:   rgba(24, 24, 27, 0.7);
+      --bg-card:      #18181b;
+      --bg-hover:     #27272a;
+      --border:       rgba(255, 255, 255, 0.08);
+      --border-hover: rgba(255, 255, 255, 0.18);
+      --text-primary: #f8fafc;
+      --text-secondary:#94a3b8;
+      --text-muted:   #64748b;
+      --blue-dim:     rgba(59, 130, 246, 0.15);
+      --purple-dim:   rgba(139, 92, 246, 0.15);
+
+      --radius:       12px;
+      --radius-lg:    18px;
+      --transition:   .3s cubic-bezier(.4, 0, .2, 1);
+    }
+
+    [data-theme="light"] {
+      --bg-base:      #f0f4f8;
+      --bg-surface:   rgba(255, 255, 255, 0.85);
+      --bg-card:      #ffffff;
+      --bg-hover:     #e2e8f0;
+      --border:       rgba(0, 0, 0, 0.06);
+      --border-hover: rgba(0, 0, 0, 0.15);
+      --text-primary: #0f172a;
+      --text-secondary:#475569;
+      --text-muted:   #64748b;
+      --blue-dim:     rgba(59, 130, 246, 0.1);
+      --purple-dim:   rgba(139, 92, 246, 0.1);
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      overflow: hidden;
+      transition: background var(--transition), color var(--transition);
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────── */
+    .app {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      grid-template-rows: 60px 1fr;
+      height: 100vh;
+    }
+
+    /* ── Topbar ─────────────────────────────────────────────────────── */
+    .topbar {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 24px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      transition: background var(--transition), border-color var(--transition);
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: -.3px;
+    }
+    .logo-icon {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, var(--blue), var(--purple));
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+    }
+    .logo span { color: var(--blue); }
+    .topbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .badge {
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .5px;
+      text-transform: uppercase;
+    }
+    .badge-blue { background: var(--blue-dim); color: var(--blue); border: 1px solid rgba(59,130,246,.3); }
+    .badge-purple { background: var(--purple-dim); color: var(--purple); border: 1px solid rgba(139,92,246,.3); }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────── */
+    .sidebar {
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: background var(--transition), border-color var(--transition);
+    }
+    .sidebar-header {
+      padding: 16px 20px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .job-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    .job-list::-webkit-scrollbar { width: 4px; }
+    .job-list::-webkit-scrollbar-track { background: transparent; }
+    .job-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .job-item {
+      padding: 12px 14px;
+      border-radius: var(--radius);
+      margin-bottom: 4px;
+      cursor: pointer;
+      transition: background var(--transition);
+      border: 1px solid transparent;
+    }
+    .job-item:hover { background: var(--bg-hover); border-color: var(--border); }
+    .job-item.active { background: var(--blue-dim); border-color: var(--border-hover); }
+    .job-name {
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 4px;
+    }
+    .job-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .status-pill {
+      padding: 2px 7px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .status-running { background: rgba(245,158,11,.15); color: var(--orange); }
+    .status-complete { background: rgba(34,197,94,.15); color: var(--green); }
+    .status-error { background: rgba(239,68,68,.15); color: var(--red); }
+    .status-pending { background: rgba(148,163,184,.15); color: var(--text-secondary); }
+
+    .sidebar-empty {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--text-muted);
+      font-size: 13px;
+      padding: 20px;
+      text-align: center;
+    }
+    .sidebar-empty-icon { font-size: 32px; opacity: .4; }
+
+    /* ── Main ─────────────────────────────────────────────────────────── */
+    .main {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Upload View ─────────────────────────────────────────────────── */
+    #view-upload {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      gap: 32px;
+    }
+    .upload-hero {
+      text-align: center;
+    }
+    .upload-hero h1 {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -.5px;
+      background: linear-gradient(135deg, var(--text-primary) 0%, var(--blue) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 10px;
+    }
+    .upload-hero p {
+      font-size: 15px;
+      color: var(--text-secondary);
+      max-width: 440px;
+      line-height: 1.6;
+    }
+
+    .drop-zone {
+      width: 100%;
+      max-width: 600px;
+      border: 2px dashed var(--border-hover);
+      border-radius: var(--radius-lg);
+      padding: 60px 40px;
+      text-align: center;
+      cursor: pointer;
+      transition: all var(--transition);
+      position: relative;
+      background: var(--bg-card);
+    }
+    .drop-zone::before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      background: linear-gradient(135deg, rgba(59,130,246,.08), rgba(139,92,246,.08));
+      pointer-events: none;
+    }
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+      border-color: var(--blue);
+      background: var(--bg-hover);
+      box-shadow: 0 0 40px rgba(59,130,246,.1);
+    }
+    .drop-zone.drag-over { transform: scale(1.02); }
+    .drop-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+      display: block;
+      filter: drop-shadow(0 0 20px rgba(59,130,246,.4));
+    }
+    .drop-title {
+      font-size: 17px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .drop-subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 22px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all var(--transition);
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: var(--blue);
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(59,130,246,.35);
+    }
+    .btn-primary:hover { background: #2563eb; transform: translateY(-1px); box-shadow: 0 6px 24px rgba(59,130,246,.5); }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      transition: all var(--transition);
+    }
+    .btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-hover); }
+    .btn-sm { padding: 7px 14px; font-size: 12px; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+    .options-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle {
+      width: 36px; height: 20px;
+      background: var(--bg-hover);
+      border-radius: 10px;
+      position: relative;
+      border: 1px solid var(--border);
+      transition: background var(--transition);
+    }
+    .toggle.on { background: var(--blue); border-color: var(--blue); }
+    .toggle::after {
+      content: '';
+      width: 14px; height: 14px;
+      background: #fff;
+      border-radius: 50%;
+      position: absolute;
+      top: 2px; left: 2px;
+      transition: left var(--transition);
+    }
+    .toggle.on::after { left: 18px; }
+    #file-input { display: none; }
+
+    /* ── Processing View ─────────────────────────────────────────────── */
+    #view-processing {
+      flex: 1;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      gap: 32px;
+    }
+    .processing-filename {
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .processing-title {
+      font-size: 22px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .stages-track {
+      width: 100%;
+      max-width: 660px;
+      display: flex;
+      align-items: flex-start;
+      gap: 0;
+    }
+    .stage {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      position: relative;
+    }
+    .stage:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      top: 22px;
+      left: calc(50% + 22px);
+      right: calc(-50% + 22px);
+      height: 2px;
+      background: var(--border);
+      transition: background .6s;
+    }
+    .stage.done:not(:last-child)::after { background: var(--blue); }
+    .stage-icon {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      background: var(--bg-card);
+      border: 2px solid var(--border);
+      transition: all .4s;
+      position: relative;
+      z-index: 1;
+    }
+    .stage.running .stage-icon {
+      border-color: var(--blue);
+      background: var(--blue-dim);
+      box-shadow: 0 0 20px rgba(59,130,246,.4);
+      animation: glow 1.5s ease-in-out infinite;
+    }
+    .stage.done .stage-icon {
+      border-color: var(--green);
+      background: rgba(34,197,94,.15);
+    }
+    @keyframes glow { 0%,100%{box-shadow:0 0 10px rgba(59,130,246,.3)} 50%{box-shadow:0 0 30px rgba(59,130,246,.7)} }
+    .stage-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      transition: color .4s;
+      max-width: 80px;
+    }
+    .stage.running .stage-label { color: var(--blue); }
+    .stage.done .stage-label { color: var(--green); }
+
+    .progress-bar-wrap {
+      width: 100%;
+      max-width: 660px;
+      height: 6px;
+      background: var(--bg-card);
+      border-radius: 3px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--blue), var(--purple));
+      border-radius: 3px;
+      transition: width .6s cubic-bezier(.4,0,.2,1);
+      box-shadow: 0 0 12px rgba(59,130,246,.5);
+    }
+    .progress-pct {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .progress-pct strong { color: var(--blue); font-variant-numeric: tabular-nums; }
+    
+    .live-logs {
+      width: 100%;
+      height: 180px;
+      max-width: 660px;
+      background: #09090b;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: Consolas, Monaco, "Courier New", monospace;
+      font-size: 11px;
+      color: var(--text-secondary);
+      text-align: left;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+      margin-top: 5px;
+      display: none;
+    }
+    
+    [data-theme="light"] .live-logs {
+      background: var(--bg-card);
+    }
+
+    /* ── Result View ─────────────────────────────────────────────────── */
+    #view-result {
+      flex: 1;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .result-header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-surface);
+    }
+    .result-filename {
+      font-size: 15px;
+      font-weight: 600;
+      flex: 1;
+    }
+    .result-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .result-tabs-bar {
+      display: flex;
+      gap: 2px;
+      padding: 8px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-surface);
+    }
+    .tab-btn {
+      padding: 7px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      transition: all var(--transition);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .tab-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+    .tab-btn.active { color: var(--blue); background: var(--blue-dim); }
+
+    .result-body {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+    .tab-panel {
+      position: absolute;
+      inset: 0;
+      overflow: auto;
+      display: none;
+      padding: 24px;
+    }
+    .tab-panel.active { display: block; }
+    .tab-panel::-webkit-scrollbar { width: 6px; }
+    .tab-panel::-webkit-scrollbar-track { background: transparent; }
+    .tab-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* Markdown panel */
+    .md-content {
+      max-width: 720px;
+      margin: 0 auto;
+      font-size: 14px;
+      line-height: 1.8;
+      color: var(--text-primary);
+    }
+    .md-content h1 { font-size: 26px; font-weight: 700; margin: 0 0 16px; color: var(--text-primary); }
+    .md-content h2 { font-size: 20px; font-weight: 600; margin: 24px 0 12px; }
+    .md-content h3 { font-size: 16px; font-weight: 600; margin: 20px 0 8px; color: var(--text-secondary); }
+    .md-content p  { margin-bottom: 14px; color: var(--text-secondary); }
+    .md-content ul { margin: 0 0 14px 20px; color: var(--text-secondary); }
+    .md-content li { margin-bottom: 6px; }
+    .md-content table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; }
+    .md-content th { background: var(--bg-card); padding: 10px 14px; text-align: left; font-weight: 600; border: 1px solid var(--border); }
+    .md-content td { padding: 9px 14px; border: 1px solid var(--border); color: var(--text-secondary); }
+    .md-content tr:hover td { background: var(--bg-hover); }
+    .md-content code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: var(--bg-card); padding: 2px 6px; border-radius: 4px; color: var(--cyan); }
+    .md-content pre { background: var(--bg-card); padding: 16px; border-radius: var(--radius); overflow-x: auto; border: 1px solid var(--border); }
+    .md-content pre code { background: none; padding: 0; }
+
+    /* JSON panel */
+    .json-viewer {
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      padding: 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      overflow-x: auto;
+      white-space: pre;
+      color: var(--text-secondary);
+    }
+    .json-key   { color: var(--blue); }
+    .json-str   { color: var(--green); }
+    .json-num   { color: var(--orange); }
+    .json-bool  { color: var(--purple); }
+    .json-null  { color: var(--text-muted); }
+
+    /* Chunks panel */
+    .chunks-grid {
+      display: grid;
+      gap: 12px;
+    }
+    .chunk-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      transition: border-color var(--transition);
+    }
+    .chunk-card:hover { border-color: var(--border-hover); }
+    .chunk-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .chunk-type-badge {
+      padding: 3px 9px;
+      border-radius: 20px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+    .type-text    { background: rgba(59,130,246,.15); color: var(--blue); }
+    .type-title   { background: rgba(139,92,246,.15); color: var(--purple); }
+    .type-table   { background: rgba(245,158,11,.15); color: var(--orange); }
+    .type-figure  { background: rgba(34,211,238,.15); color: var(--cyan); }
+    .type-list    { background: rgba(34,197,94,.15); color: var(--green); }
+    .type-formula { background: rgba(239,68,68,.15); color: var(--red); }
+    .chunk-page {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+    .chunk-text {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      max-height: 80px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+    }
+    .chunk-entities {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 10px;
+    }
+    .entity-tag {
+      padding: 2px 8px;
+      background: var(--purple-dim);
+      border: 1px solid rgba(139,92,246,.25);
+      border-radius: 20px;
+      font-size: 10px;
+      color: var(--purple);
+      font-weight: 600;
+    }
+
+    /* Artifacts panel */
+    .artifacts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .artifact-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: all var(--transition);
+      cursor: pointer;
+    }
+    .artifact-card:hover { border-color: var(--blue); transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,0,0,.4); }
+    .artifact-img {
+      width: 100%;
+      aspect-ratio: 3/4;
+      object-fit: cover;
+      display: block;
+      background: var(--bg-surface);
+    }
+    .artifact-label {
+      padding: 10px 14px;
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .no-artifacts {
+      grid-column: 1 / -1;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+      padding: 40px;
+    }
+
+    /* ── Lightbox ─────────────────────────────────────────────────────── */
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.85);
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(6px);
+    }
+    .lightbox.open { display: flex; }
+    .lightbox img {
+      max-width: 90vw;
+      max-height: 90vh;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+    .lightbox-close {
+      position: absolute;
+      top: 20px; right: 20px;
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      font-size: 18px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+    }
+
+    /* ── Scrollbar global ─────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* ── Animations ────────────────────────────────────────────────────── */
+    .fade-in { animation: fadeIn .3s ease; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ── Topbar ──────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="logo">
+      <div class="logo-icon">🔬</div>
+      Tu<span>Data</span>
+    </div>
+    <div class="badge badge-purple">v1.0</div>
+    <div class="topbar-right">
+      <button class="btn-ghost" id="theme-btn" onclick="toggleTheme()" style="border:none; border-radius:50%; width:36px; height:36px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px; background:var(--bg-card); transition:transform 0.3s;" title="Cambiar Tema">
+        🌙
+      </button>
+      <div class="status-dot" id="api-dot" title="API Status"></div>
+      <span id="api-status-text" style="font-size:12px;color:var(--text-muted)">Conectando...</span>
+      <div class="badge badge-blue" id="active-jobs" style="display:none">0 activos</div>
+    </div>
+  </header>
+
+  <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-header">Historial de Trabajos</div>
+    <div class="job-list" id="job-list">
+      <div class="sidebar-empty">
+        <div class="sidebar-empty-icon">📂</div>
+        <div>No hay documentos procesados todavía</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main ───────────────────────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- Upload View -->
+    <div id="view-upload" style="display:flex">
+      <div class="upload-hero fade-in">
+        <h1>Document Intelligence Pipeline</h1>
+        <p>Sube un PDF para clasificar el tipo de proyecto, separar el contenido por tipo (texto, tablas, diagramas), extraer cada stream en paralelo y consolidar un Documento de Proyecto estructurado.</p>
+      </div>
+
+      <div class="drop-zone" id="drop-zone">
+        <span class="drop-icon">📄</span>
+        <div class="drop-title">Arrastra tu PDF aquí</div>
+        <div class="drop-subtitle">o haz clic para seleccionar un archivo</div>
+        <button class="btn btn-primary" id="upload-btn" onclick="document.getElementById('file-input').click()">
+          📁 Seleccionar PDF
+        </button>
+        <input type="file" id="file-input" accept=".pdf" />
+      </div>
+
+      <div class="options-row">
+        <label class="toggle-wrap" id="viz-toggle" onclick="toggleVisualize()">
+          <div class="toggle on" id="viz-toggle-el"></div>
+          <span>Generar visualizaciones de bloques</span>
+        </label>
+        <div class="badge badge-blue" id="selected-file" style="display:none">Ningún archivo</div>
+      </div>
+
+      <div class="options-row">
+        <button class="btn btn-primary" id="process-btn" onclick="startProcessing()" disabled>
+          ⚡ Procesar Documento
+        </button>
+      </div>
+    </div>
+
+    <!-- Processing View -->
+    <div id="view-processing">
+      <div class="processing-filename" id="proc-filename">
+        <span class="spin">⟳</span>
+        <span id="proc-name">documento.pdf</span>
+      </div>
+      <div class="processing-title" id="proc-stage-title">Iniciando pipeline...</div>
+
+      <div class="stages-track" id="stages-track">
+        <!-- Populated by JS -->
+      </div>
+
+      <div style="width:100%;max-width:660px">
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+        </div>
+      </div>
+      <div class="progress-pct" id="progress-pct" style="display:flex; justify-content:space-between; width:100%; max-width:660px; align-items:center;">
+        <span>Progreso: <strong id="progress-num">0%</strong></span>
+        <button class="btn btn-ghost btn-sm" id="cancel-btn" onclick="cancelJob()" style="color:var(--red); border-color:var(--red);">🛑 Detener Pipeline</button>
+      </div>
+
+      <div class="live-logs" id="live-logs">
+        Esperando inicialización del backend...
+      </div>
+    </div>
+
+    <!-- Result View -->
+    <div id="view-result">
+      <div class="result-header">
+        <div style="font-size:20px">✅</div>
+        <div>
+          <div class="result-filename" id="res-filename">documento.pdf</div>
+          <div style="font-size:12px;color:var(--text-muted)" id="res-subtitle">Pipeline completado</div>
+          <div id="res-project-type" style="display:none;margin-top:4px"></div>
+        </div>
+        <div class="result-meta" id="res-meta"></div>
+        <div style="display:flex;gap:8px;margin-left:auto">
+          <button class="btn btn-ghost btn-sm" onclick="downloadMarkdown()">⬇ Markdown</button>
+          <button class="btn btn-ghost btn-sm" onclick="downloadJSON()">⬇ JSON</button>
+          <button class="btn btn-primary btn-sm" onclick="resetToUpload()">＋ Nuevo</button>
+        </div>
+      </div>
+
+      <div class="result-tabs-bar">
+        <button class="tab-btn active" onclick="switchTab('markdown')" id="tab-markdown">📝 Markdown</button>
+        <button class="tab-btn"       onclick="switchTab('chunks')"   id="tab-chunks">🗂 Chunks</button>
+        <button class="tab-btn"       onclick="switchTab('json')"     id="tab-json">{ } JSON</button>
+        <button class="tab-btn"       onclick="switchTab('artifacts')" id="tab-artifacts">🖼 Visualizaciones</button>
+        <button class="tab-btn"       onclick="switchTab('metrics')"   id="tab-metrics">📊 Métricas</button>
+      </div>
+
+      <div class="result-body">
+        <div class="tab-panel active" id="panel-markdown">
+          <div class="md-content" id="md-content-area"></div>
+        </div>
+        <div class="tab-panel" id="panel-chunks">
+          <div class="chunks-grid" id="chunks-grid"></div>
+        </div>
+        <div class="tab-panel" id="panel-json">
+          <div class="json-viewer" id="json-viewer"></div>
+        </div>
+        <div class="tab-panel" id="panel-artifacts">
+          <div class="artifacts-grid" id="artifacts-grid"></div>
+        </div>
+        <div class="tab-panel" id="panel-metrics">
+          <div class="metrics-dashboard" id="metrics-dashboard" style="display:grid;gap:20px;grid-template-columns:1fr 1fr;"></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <div class="lightbox-close" onclick="closeLightbox()">✕</div>
+  <img id="lightbox-img" src="" alt="artifact" />
+</div>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────────────────
+const API = '';  // same origin
+let selectedFile = null;
+let visualize = true;
+let currentJobId = null;
+let pollInterval = null;
+let currentTab = 'markdown';
+let cachedResult = null;
+let cachedMarkdown = null;
+
+const STAGE_ICONS = ['🧭','🔍','✂️','⚡','🧠'];
+const STAGE_NAMES = ['Intake','Layout','Split','Extracción','Consolida'];
+
+// ─── Init ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  initTheme();
+  setupDrop();
+  setupFileInput();
+  checkAPIStatus();
+  setInterval(refreshJobList, 5000);
+  buildStagesTrack();
+});
+
+// ─── Theme & UI ─────────────────────────────────────────────────────────────
+function initTheme() {
+  const isLight = localStorage.getItem('tudata_theme') === 'light';
+  if (isLight) applyTheme('light');
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  localStorage.setItem('tudata_theme', next);
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = document.getElementById('theme-btn');
+  if (btn) btn.textContent = theme === 'dark' ? '🌙' : '☀️';
+}
+
+function buildStagesTrack() {
+  const track = document.getElementById('stages-track');
+  track.innerHTML = STAGE_NAMES.map((name, i) => `
+    <div class="stage" id="stage-${i}">
+      <div class="stage-icon">${STAGE_ICONS[i]}</div>
+      <div class="stage-label" id="stage-label-${i}">${name}</div>
+    </div>
+  `).join('');
+}
+
+// ─── API Health ─────────────────────────────────────────────────────────────
+async function checkAPIStatus() {
+  try {
+    const r = await fetch(`${API}/api/jobs`, { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      document.getElementById('api-dot').style.background = 'var(--green)';
+      document.getElementById('api-dot').style.boxShadow = '0 0 8px var(--green)';
+      document.getElementById('api-status-text').textContent = 'API Online';
+      refreshJobList();
+    }
+  } catch {
+    document.getElementById('api-dot').style.background = 'var(--red)';
+    document.getElementById('api-dot').style.boxShadow = '0 0 8px var(--red)';
+    document.getElementById('api-status-text').textContent = 'API Offline';
+  }
+}
+
+// ─── Drag & Drop ─────────────────────────────────────────────────────────────
+function setupDrop() {
+  const zone = document.getElementById('drop-zone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f?.type === 'application/pdf') setFile(f);
+  });
+  zone.addEventListener('click', (e) => {
+    if (e.target.tagName !== 'BUTTON') document.getElementById('file-input').click();
+  });
+}
+
+function setupFileInput() {
+  document.getElementById('file-input').addEventListener('change', e => {
+    if (e.target.files[0]) setFile(e.target.files[0]);
+  });
+}
+
+function setFile(file) {
+  selectedFile = file;
+  const badge = document.getElementById('selected-file');
+  badge.style.display = 'inline-flex';
+  badge.textContent = `📄 ${file.name}`;
+  document.getElementById('process-btn').disabled = false;
+  document.getElementById('drop-zone').querySelector('.drop-title').textContent = file.name;
+  document.getElementById('drop-zone').querySelector('.drop-subtitle').textContent =
+    `${(file.size / 1024).toFixed(1)} KB · listo para procesar`;
+}
+
+// ─── Toggle visualize ────────────────────────────────────────────────────────
+function toggleVisualize() {
+  visualize = !visualize;
+  document.getElementById('viz-toggle-el').classList.toggle('on', visualize);
+}
+
+// ─── Process ─────────────────────────────────────────────────────────────────
+async function startProcessing() {
+  if (!selectedFile) return;
+
+  const form = new FormData();
+  form.append('file', selectedFile);
+
+  showView('processing');
+  document.getElementById('proc-name').textContent = selectedFile.name;
+  setStages([]);
+
+  const logsEl = document.getElementById('live-logs');
+  logsEl.innerHTML = '';
+  logsEl.style.display = 'block';
+
+  try {
+    const r = await fetch(`${API}/api/process?visualize=${visualize}`, {
+      method: 'POST', body: form
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const { job_id } = await r.json();
+    currentJobId = job_id;
+    document.getElementById('cancel-btn').disabled = false;
+    startPolling(job_id);
+  } catch (err) {
+    alert(`Error al iniciar el pipeline: ${err.message}`);
+    showView('upload');
+  }
+}
+
+async function cancelJob() {
+  if (!currentJobId) return;
+  const btn = document.getElementById('cancel-btn');
+  btn.disabled = true;
+  btn.textContent = "Cancelando...";
+  
+  try {
+    const r = await fetch(`${API}/api/cancel/${currentJobId}`, { method: 'POST' });
+    if (!r.ok) throw new Error("No se pudo cancelar el proceso.");
+    pollStatus(currentJobId); // Fetch final cancelled state to render error screen natively
+  } catch (err) {
+    alert(err.message);
+    btn.disabled = false;
+    btn.textContent = "🛑 Detener Pipeline";
+  }
+}
+
+// ─── Polling ──────────────────────────────────────────────────────────────────
+function startPolling(jobId) {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(() => pollStatus(jobId), 1000);
+}
+
+async function pollStatus(jobId) {
+  try {
+    const r = await fetch(`${API}/api/status/${jobId}`);
+    if (!r.ok) return;
+    const job = await r.json();
+    updateProgressUI(job);
+
+    if (job.status === 'complete') {
+      clearInterval(pollInterval);
+      await loadResults(jobId, job);
+      refreshJobList();
+    } else if (job.status === 'error') {
+      clearInterval(pollInterval);
+      alert(`Pipeline error: ${job.error}`);
+      showView('upload');
+    }
+  } catch { /* network hiccup, keep polling */ }
+}
+
+function updateProgressUI(job) {
+  document.getElementById('progress-fill').style.width = job.progress + '%';
+  document.getElementById('progress-num').textContent = job.progress + '%';
+  const timeEl = document.getElementById('progress-time');
+  if (timeEl) {
+    const elapsed = (job.total_duration || 0).toFixed(1);
+    timeEl.textContent = `${elapsed}s`;
+  }
+
+  const stageIdx = job.current_stage ?? 0;
+  const stages = job.stages ?? [];
+  setStages(stages, stageIdx, job.status === 'complete');
+  const label = stages[stageIdx]?.name ?? 'Procesando...';
+  document.getElementById('proc-stage-title').textContent =
+    job.status === 'complete' ? '✅ Pipeline completado' : `⚙ ${label}`;
+
+  const logsEl = document.getElementById('live-logs');
+  if (logsEl && job.logs) {
+    logsEl.innerHTML = job.logs.join('<br>');
+    // Auto-scroll to bottom
+    logsEl.scrollTop = logsEl.scrollHeight;
+  }
+}
+
+function setStages(stages, currentIdx = 0, done = false) {
+  STAGE_NAMES.forEach((_, i) => {
+    const el = document.getElementById(`stage-${i}`);
+    if (!el) return;
+    el.className = 'stage';
+    
+    // Update label with duration
+    const labelEl = document.getElementById(`stage-label-${i}`);
+    if (labelEl) {
+      let addedTime = '';
+      if (stages[i] && stages[i].duration > 0) {
+         addedTime = `<br><span style="font-size:11px; opacity:0.8">${stages[i].duration.toFixed(1)}s</span>`;
+      }
+      labelEl.innerHTML = STAGE_NAMES[i] + addedTime;
+    }
+
+    if (done || (stages[i] && stages[i].status === 'done') || i < currentIdx) el.classList.add('done');
+    else if (i === currentIdx && !done) el.classList.add('running');
+  });
+}
+
+// ─── Load Results ─────────────────────────────────────────────────────────────
+async function loadResults(jobId, job) {
+  currentJobId = jobId;
+
+  // Fetch markdown
+  try {
+    const r = await fetch(`${API}/api/markdown/${jobId}`);
+    cachedMarkdown = r.ok ? await r.text() : '';
+  } catch { cachedMarkdown = ''; }
+
+  // Fetch JSON
+  try {
+    const r = await fetch(`${API}/api/result/${jobId}`);
+    cachedResult = r.ok ? await r.json() : null;
+  } catch { cachedResult = null; }
+
+  // Populate UI
+  renderMarkdown(cachedMarkdown);
+  renderChunks(cachedResult?.chunks ?? []);
+  renderJSON(cachedResult);
+  renderArtifacts(job.artifacts ?? [], jobId);
+  if (job.metrics) renderMetrics(job.metrics);
+
+  // Result header
+  document.getElementById('res-filename').textContent = job.filename;
+  document.getElementById('res-subtitle').textContent =
+    `Completado en ${(job.total_duration || 0).toFixed(1)}s · ${job.page_count} páginas · ${job.chunk_count} chunks`;
+
+  const meta = document.getElementById('res-meta');
+  meta.innerHTML = `
+    <div class="badge badge-green">⏱️ ${(job.total_duration || 0).toFixed(1)}s</div>
+    <div class="badge badge-blue">${job.page_count} páginas</div>
+    <div class="badge badge-purple">${job.chunk_count} chunks</div>
+  `;
+
+  showView('result');
+  switchTab('markdown');
+  refreshJobList();
+}
+
+// ─── Renderers ────────────────────────────────────────────────────────────────
+function renderMarkdown(md) {
+  if (!md) {
+    document.getElementById('md-content-area').innerHTML =
+      '<p style="color:var(--text-muted)">No hay contenido Markdown disponible.</p>';
+    return;
+  }
+  // Lightweight MD → HTML
+  const html = md
+    .replace(/^#{1}\s(.+)/gm,  '<h1>$1</h1>')
+    .replace(/^#{2}\s(.+)/gm,  '<h2>$1</h2>')
+    .replace(/^#{3}\s(.+)/gm,  '<h3>$1</h3>')
+    .replace(/\*\*(.*?)\*\*/g,  '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g,      '<code>$1</code>')
+    .replace(/^\|\s(.+)/gm,     '<table><tr><td>$1</td></tr></table>')
+    .replace(/^- (.+)/gm,       '<li>$1</li>')
+    .replace(/(<li>.+<\/li>\n?)+/g, '<ul>$&</ul>')
+    .replace(/\$\$([\s\S]*?)\$\$/g, '<pre><code>$1</code></pre>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/^(?!<[huptl])/gm, '');
+  document.getElementById('md-content-area').innerHTML =
+    `<div class="fade-in">${html}</div>`;
+}
+
+function renderChunks(chunks) {
+  const grid = document.getElementById('chunks-grid');
+  if (!chunks || !chunks.length) {
+    grid.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px">No hay chunks disponibles.</p>';
+    return;
+  }
+  
+  let html = '';
+  chunks.forEach((c, i) => {
+    let metaTags = '';
+    if (c.doc_type_hint) metaTags += `<span class="chunk-type-badge" style="background:var(--purple);color:#fff">${c.doc_type_hint}</span> `;
+    if (c.chunk_type) metaTags += `<span class="chunk-type-badge type-${c.chunk_type}">${c.chunk_type}</span> `;
+    if (c.page !== undefined) metaTags += `<span class="chunk-page">Pág ${c.page + 1}</span> `;
+    if (c.position) metaTags += `<span class="chunk-page" style="border:1px solid var(--border)">${c.position}</span>`;
+
+    let entityHtml = '';
+    if (c.entities && c.entities.length) {
+      entityHtml = `<div class="chunk-entities" style="margin-top:10px;">
+        ${c.entities.map(e => `<span class="entity-tag">${e.value} <span style="opacity:0.5;font-size:10px">(${e.type})</span></span>`).join('')}
+      </div>`;
+    }
+    
+    let keywordHtml = '';
+    if (c.keywords && c.keywords.length) {
+      keywordHtml = `<div class="chunk-entities" style="margin-top:6px;">
+        ${c.keywords.map(k => `<span class="entity-tag" style="background:var(--bg-hover)">🔑 ${k}</span>`).join('')}
+      </div>`;
+    }
+
+    let summaryHtml = '';
+    if (c.summary) {
+      summaryHtml = `<div style="font-size:13px; color:var(--text-secondary); margin-bottom:10px; font-weight:500;">💡 ${c.summary}</div>`;
+    }
+
+    let kvHtml = '';
+    if (c.key_values && c.key_values.length) {
+      kvHtml = `<div style="margin-top:12px;display:grid;grid-template-columns:1fr;gap:4px;">
+        ${c.key_values.map(kv => `
+          <div style="font-size:12px;background:var(--bg-hover);padding:4px 8px;border-radius:4px;border:1px solid var(--border)">
+            <span style="color:var(--text-muted);font-weight:600">${kv.key}:</span> ${kv.value}
+          </div>
+        `).join('')}
+      </div>`;
+    }
+
+    let textPreview = (c.text || '').replace(/</g,'&lt;').substring(0, 300);
+    if ((c.text || '').length > 300) textPreview += '...';
+
+    html += `
+      <div class="chunk-card fade-in" style="animation-delay:${i*.04}s">
+        <div class="chunk-header" style="flex-wrap:wrap">
+          ${metaTags}
+        </div>
+        ${summaryHtml}
+        <div class="chunk-text" style="white-space:pre-wrap">${textPreview}</div>
+        ${kvHtml}
+        ${entityHtml}
+        ${keywordHtml}
+      </div>
+    `;
+  });
+  grid.innerHTML = html;
+}
+
+function renderMetrics(metrics) {
+  const container = document.getElementById('metrics-dashboard');
+  if (!container || !metrics) return;
+  
+  const score = metrics.pipeline_quality_score ?? 0;
+  const scoreColor = score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--orange)' : 'var(--red)';
+  
+  let html = `
+    <div class="chunk-card" style="grid-column: 1 / -1; display:flex; align-items:center; justify-content:space-between; background:var(--bg-hover);">
+      <div>
+        <div style="font-size:14px; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.05em">Quality Score</div>
+        <div style="font-size:32px; font-weight:700; color:${scoreColor}">${score}/100</div>
+        <div style="font-size:12px; color:var(--text-secondary)">Puntaje compuesto de confianza y éxito OCR</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:14px; color:var(--text-muted); font-weight:600">Doc Type Detected</div>
+        <div style="font-size:20px; font-weight:600; color:var(--text-primary); text-transform:capitalize">${metrics.doc_type_detected || 'Unknown'}</div>
+      </div>
+    </div>
+    
+    <div class="chunk-card">
+      <h3 style="margin-bottom:12px; font-size:14px; color:var(--purple); border-bottom:1px solid var(--border); padding-bottom:6px">📊 Layout & Reading Order</h3>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Páginas Procesadas</span> <strong>${metrics.pages_processed || 0}</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Densidad (Bloques/Pág)</span> <strong>${metrics.blocks_per_page_avg || 0}</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Confianza Media</span> <strong>${(metrics.detection_confidence_mean || 0).toFixed(2)}</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Razón Baja Confianza</span> <strong style="color:${(metrics.low_confidence_ratio || 0) > 0.1 ? 'var(--red)' : 'var(--text-primary)'}">${((metrics.low_confidence_ratio || 0)*100).toFixed(1)}%</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Cambios de Reorden</span> <strong>${((metrics.reordering_score || 0)*100).toFixed(1)}%</strong></div>
+    </div>
+    
+    <div class="chunk-card">
+      <h3 style="margin-bottom:12px; font-size:14px; color:var(--blue); border-bottom:1px solid var(--border); padding-bottom:6px">📝 OCR & Markdown</h3>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Total Bloques OCR</span> <strong>${metrics.ocr_blocks_total || 0}</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Tasa Fallo (Vacío)</span> <strong style="color:${(metrics.ocr_empty_ratio || 0) > 0.05 ? 'var(--red)' : 'var(--text-primary)'}">${((metrics.ocr_empty_ratio || 0)*100).toFixed(1)}%</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Velocidad OCR</span> <strong>${metrics.ocr_duration_per_block || 0}s/bloque</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Markdown Chars</span> <strong>${metrics.markdown_chars || 0}</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Densidad Contenido</span> <strong>${metrics.content_density || 0} chars/pág</strong></div>
+    </div>
+    
+    <div class="chunk-card">
+      <h3 style="margin-bottom:12px; font-size:14px; color:var(--green); border-bottom:1px solid var(--border); padding-bottom:6px">🤖 Extracción LLM</h3>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Chunks Extraídos</span> <strong>${metrics.chunks_extracted || 0}</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Tasa Confianza LLM</span> <strong>${((metrics.avg_chunk_confidence || 0)*100).toFixed(1)}%</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Entidades Detectadas</span> <strong>${metrics.entities_extracted || 0}</strong></div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:8px"><span>Latencia LLM</span> <strong>${metrics.llm_latency_ms || 0}ms</strong></div>
+    </div>
+  `;
+  container.innerHTML = html;
+}
+
+
+function renderJSON(data) {
+  const el = document.getElementById('json-viewer');
+  if (!data) { el.textContent = 'No disponible.'; return; }
+  el.innerHTML = syntaxHighlight(JSON.stringify(data, null, 2));
+}
+
+function syntaxHighlight(json) {
+  return json
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"([\w-]+)":/g,       '<span class="json-key">"$1"</span>:')
+    .replace(/: "(.*?)"/g,         ': <span class="json-str">"$1"</span>')
+    .replace(/: (\d+\.?\d*)/g,     ': <span class="json-num">$1</span>')
+    .replace(/: (true|false)/g,    ': <span class="json-bool">$1</span>')
+    .replace(/: (null)/g,          ': <span class="json-null">$1</span>');
+}
+
+function renderArtifacts(filenames, jobId) {
+  const grid = document.getElementById('artifacts-grid');
+  if (!filenames.length) {
+    grid.innerHTML = '<div class="no-artifacts">⚙ No se generaron visualizaciones.<br>Activa la opción al subir el PDF.</div>';
+    return;
+  }
+  grid.innerHTML = filenames.map(fn => `
+    <div class="artifact-card" onclick="openLightbox('${API}/api/artifact/${jobId}/${fn}')">
+      <img class="artifact-img" src="${API}/api/artifact/${jobId}/${fn}" alt="${fn}" loading="lazy" />
+      <div class="artifact-label">${fn}</div>
+    </div>
+  `).join('');
+}
+
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  currentTab = name;
+  ['markdown','chunks','json','artifacts','metrics'].forEach(t => {
+    const tabEl = document.getElementById(`tab-${t}`);
+    const panEl = document.getElementById(`panel-${t}`);
+    if (tabEl) tabEl.classList.toggle('active', t === name);
+    if (panEl) panEl.classList.toggle('active', t === name);
+  });
+}
+
+// ─── Views ────────────────────────────────────────────────────────────────────
+function showView(view) {
+  ['upload','processing','result'].forEach(v => {
+    const el = document.getElementById(`view-${v}`);
+    el.style.display = (v === view) ? 'flex' : 'none';
+    if (v === 'result') el.style.display = (v === view) ? 'flex' : 'none';
+  });
+}
+
+function resetToUpload() {
+  selectedFile = null;
+  currentJobId = null;
+  cachedResult = null;
+  cachedMarkdown = null;
+  document.getElementById('file-input').value = '';
+  document.getElementById('drop-zone').querySelector('.drop-title').textContent = 'Arrastra tu PDF aquí';
+  document.getElementById('drop-zone').querySelector('.drop-subtitle').textContent = 'o haz clic para seleccionar un archivo';
+  document.getElementById('selected-file').style.display = 'none';
+  document.getElementById('process-btn').disabled = true;
+  document.getElementById('progress-fill').style.width = '0%';
+  showView('upload');
+}
+
+// ─── Downloads ────────────────────────────────────────────────────────────────
+function downloadMarkdown() {
+  if (!cachedMarkdown || !currentJobId) return;
+  const blob = new Blob([cachedMarkdown], { type: 'text/markdown' });
+  downloadBlob(blob, `${currentJobId.slice(0,8)}.md`);
+}
+
+function downloadJSON() {
+  if (!cachedResult || !currentJobId) return;
+  const blob = new Blob([JSON.stringify(cachedResult, null, 2)], { type: 'application/json' });
+  downloadBlob(blob, `${currentJobId.slice(0,8)}.json`);
+}
+
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+}
+
+// ─── Job History Sidebar ─────────────────────────────────────────────────────
+async function refreshJobList() {
+  try {
+    const r = await fetch(`${API}/api/jobs`);
+    if (!r.ok) return;
+    const jobs = await r.json();
+    const list = document.getElementById('job-list');
+
+    if (!jobs.length) {
+      list.innerHTML = `<div class="sidebar-empty"><div class="sidebar-empty-icon">📂</div><div>No hay documentos procesados todavía</div></div>`;
+      return;
+    }
+
+    const running = jobs.filter(j => j.status === 'running').length;
+    const badge = document.getElementById('active-jobs');
+    badge.style.display = running ? 'inline-flex' : 'none';
+    badge.textContent = `${running} activo${running !== 1 ? 's' : ''}`;
+
+    list.innerHTML = jobs.map(j => `
+      <div class="job-item ${j.job_id === currentJobId ? 'active' : ''}"
+           onclick="loadJobFromHistory('${j.job_id}')">
+        <div class="job-name">📄 ${escHtml(j.filename)}</div>
+        <div class="job-meta">
+          <span class="status-pill status-${j.status}">
+            ${j.status === 'running' ? '⟳ ' : j.status === 'complete' ? '✓ ' : '✕ '}${j.status}
+          </span>
+          ${j.status === 'running' ? `${j.progress}%` : `${j.chunk_count} chunks`}
+        </div>
+      </div>
+    `).join('');
+  } catch { /* silent */ }
+}
+
+async function loadJobFromHistory(jobId) {
+  try {
+    const r = await fetch(`${API}/api/status/${jobId}`);
+    if (!r.ok) return;
+    const job = await r.json();
+    if (job.status === 'complete') {
+      await loadResults(jobId, job);
+    } else if (job.status === 'running') {
+      showView('processing');
+      currentJobId = jobId;
+      document.getElementById('proc-name').textContent = job.filename;
+      updateProgressUI(job);
+      startPolling(jobId);
+    }
+  } catch { /* silent */ }
+}
+
+// ─── Lightbox ─────────────────────────────────────────────────────────────────
+function openLightbox(src) {
+  document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox').classList.add('open');
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeLightbox();
+});
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
