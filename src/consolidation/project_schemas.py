@@ -69,7 +69,7 @@ class TableResult(BaseModel):
     page:       int
     caption:    Optional[str] = None
     headers:    list[str]     = Field(default_factory=list)
-    rows:       list[dict[str, str]] = Field(default_factory=list)
+    rows:       list[dict[str, Any]] = Field(default_factory=list)
     row_count:  int           = 0
     col_count:  int           = 0
     extraction_method: str    = "unknown"
@@ -83,7 +83,7 @@ class FigureResult(BaseModel):
     figure_type:     str            = "other"
     description:     str            = ""
     components:      list[str]      = Field(default_factory=list)
-    technical_specs: dict[str, str] = Field(default_factory=dict)
+    technical_specs: dict[str, Any] = Field(default_factory=dict)
     text_labels:     list[str]      = Field(default_factory=list)
     references:      list[str]      = Field(default_factory=list)
     confidence:      float          = 1.0

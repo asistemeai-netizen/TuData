@@ -94,9 +94,14 @@ Extract the complete table data and return ONLY a JSON object with this exact fo
 
 Rules:
 - Headers: use the first row if it looks like a header, otherwise infer from context.
-- Preserve ALL rows including totals, subtotals, notes.
+- Preserve ALL rows including totals, subtotals, notes rows.
 - For monetary values, preserve the exact format ($1,234.56).
 - For merged cells, repeat the value in each applicable column.
+- For empty cells, use an empty string "" (never null).
+- If this is an electrical panel schedule, ensure you capture:
+  circuit numbers, breaker sizes (amps), wire sizes, load descriptions, phases, poles.
+- If this is a Bill of Materials (BOM), ensure you capture:
+  item numbers, part numbers, descriptions, quantities, unit prices, totals.
 - Return ONLY the JSON, no commentary.
 """
 
@@ -150,7 +155,7 @@ class GeminiTableExtractor:
                 ],
                 config=self._types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    max_output_tokens=4096,
+                    max_output_tokens=8192,   # v2: doubled from 4096 for large tables
                     temperature=0.0,
                 ),
             )

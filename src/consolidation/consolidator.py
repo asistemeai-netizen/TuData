@@ -183,15 +183,19 @@ class Consolidator:
         table_content = self._format_tables(table_data)
         figure_content= self._format_figures(figure_data)
 
+        # Save intermediate stream data for debugging and data preservation
+        self._save_intermediate(doc_id, text_content, table_content, figure_content, table_data, figure_data)
+
         domain  = _DOMAIN_MAP.get(project_type.value, "industrial documents")
         doc_type= project_type.value.replace("_", " ")
 
+        # v2: increased content budgets to prevent silent data truncation
         prompt = _CONSOLIDATE_PROMPT.format(
             domain=domain,
             doc_type=doc_type,
-            text_content=text_content[:8000],
-            table_content=table_content[:6000],
-            figure_content=figure_content[:3000],
+            text_content=text_content[:12000],
+            table_content=table_content[:10000],
+            figure_content=figure_content[:10000],
         )
 
         _log(f"[Consolidator] Calling LLM ({self._model}) ...")
@@ -291,7 +295,7 @@ class Consolidator:
         quality_score = float(data.get("quality_score", 0))
 
         if metrics is not None:
-            metrics["consolidator_llm_ms"] = llm_ms if "llm_ms" in dir() else 0
+            metrics["consolidator_llm_ms"] = llm_ms if 'llm_ms' in locals() else 0
             metrics["line_items_extracted"] = len(line_items)
             metrics["tech_specs_extracted"] = len(tech_specs)
             metrics["missing_fields_count"] = len(missing)
@@ -395,3 +399,39 @@ class Consolidator:
                 ))
 
         return missing
+
+    def _save_intermediate(
+        self,
+        doc_id: str,
+        text_content: str,
+        table_content: str,
+        figure_content: str,
+        table_data: list,
+        figure_data: list,
+    ) -> None:
+        """Save intermediate stream data for debugging and audit."""
+        import os
+        from pathlib import Path
+
+        results_dir = Path("results") / doc_id
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Save raw stream text
+            (results_dir / "_stream_text.txt").write_text(text_content, encoding="utf-8")
+            (results_dir / "_stream_tables.txt").write_text(table_content, encoding="utf-8")
+            (results_dir / "_stream_figures.txt").write_text(figure_content, encoding="utf-8")
+
+            # Save structured table/figure data as JSON
+            import json
+            tables_json = [td.to_dict() if hasattr(td, 'to_dict') else str(td) for td in table_data]
+            figures_json = [fd.to_dict() if hasattr(fd, 'to_dict') else str(fd) for fd in figure_data]
+            (results_dir / "_tables_structured.json").write_text(
+                json.dumps(tables_json, indent=2, default=str), encoding="utf-8"
+            )
+            (results_dir / "_figures_structured.json").write_text(
+                json.dumps(figures_json, indent=2, default=str), encoding="utf-8"
+            )
+            logger.info(f"[Consolidator] Intermediate data saved to {results_dir}")
+        except Exception as exc:
+            logger.warning(f"[Consolidator] Could not save intermediate data: {exc}")

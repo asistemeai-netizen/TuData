@@ -57,7 +57,57 @@ STAGES = [
     "Content Splitter",            # Stage 2: Separate text / tables / figures
     "Extracción Paralela",         # Stage 3: Text + Tables + Figures in parallel
     "Consolidación (LLM)",         # Stage 4: Gemini synthesizes ProjectDocument
+    "Renderizado Markdown",        # Stage 5: Full-page Gemini Vision rendering
 ]
+
+
+def _restore_jobs_from_disk():
+    """Scan results/ directory and restore completed jobs so sidebar works after restart."""
+    for result_dir in RESULTS_DIR.iterdir():
+        if not result_dir.is_dir():
+            continue
+        job_id = result_dir.name
+        if job_id in _jobs:
+            continue  # already loaded
+        # Check if there are result files
+        json_files = list(result_dir.glob("*.json"))
+        md_files = list(result_dir.glob("*.md"))
+        if not json_files and not md_files:
+            continue
+        # Try to recover metadata from JSON
+        page_count = 0
+        chunk_count = 0
+        try:
+            import json as _json
+            data = _json.loads(json_files[0].read_text(encoding="utf-8")) if json_files else {}
+            page_count = data.get("metadata", {}).get("page_count", 0)
+            chunk_count = len(data.get("chunks", []))
+        except Exception:
+            pass
+        # Try to find original filename from upload
+        upload_pdf = UPLOAD_DIR / f"{job_id}.pdf"
+        filename = upload_pdf.name if upload_pdf.exists() else f"{job_id[:8]}.pdf"
+        # Check artifacts
+        art_dir = ARTIFACTS_DIR / job_id
+        artifacts = [f.name for f in sorted(art_dir.glob("*.png"))] if art_dir.exists() else []
+        _jobs[job_id] = {
+            "status": "complete",
+            "progress": 100,
+            "current_stage": len(STAGES) - 1,
+            "filename": filename,
+            "start_time": result_dir.stat().st_mtime,
+            "total_duration": 0.0,
+            "stages": [{"name": s, "status": "done", "duration": 0.0} for s in STAGES],
+            "logs": ["(Restaurado desde disco)"],
+            "artifacts": artifacts,
+            "chunk_count": chunk_count,
+            "page_count": page_count,
+            "error": None,
+        }
+    if _jobs:
+        logger.info(f"Restored {len(_jobs)} completed jobs from disk.")
+
+_restore_jobs_from_disk()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -240,11 +290,9 @@ async def cancel_job(job_id: str):
 @app.get("/api/result/{job_id}")
 async def get_result(job_id: str):
     """Return the ExtractedDocument JSON."""
-    job = _jobs.get(job_id)
-    if not job or job["status"] != "complete":
-        raise HTTPException(404, "Resultado no disponible aún.")
-
     result_dir = RESULTS_DIR / job_id
+    if not result_dir.exists():
+        raise HTTPException(404, "Resultado no disponible.")
     json_files = list(result_dir.glob("*.json"))
     if not json_files:
         raise HTTPException(404, "JSON no encontrado.")
@@ -259,11 +307,9 @@ async def get_result(job_id: str):
 @app.get("/api/markdown/{job_id}")
 async def get_markdown(job_id: str):
     """Return the assembled Markdown as plain text."""
-    job = _jobs.get(job_id)
-    if not job or job["status"] != "complete":
-        raise HTTPException(404, "Resultado no disponible aún.")
-
     result_dir = RESULTS_DIR / job_id
+    if not result_dir.exists():
+        raise HTTPException(404, "Resultado no disponible.")
     md_files = list(result_dir.glob("*.md"))
     if not md_files:
         raise HTTPException(404, "Markdown no encontrado.")

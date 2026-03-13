@@ -77,9 +77,9 @@ class DocumentAnalyzer:
             if char_count > 50:
                 digital_pages += 1
 
-            # Collect text sample from first 3 pages for classifier
-            if page_num < 3 and text:
-                text_sample_parts.append(text[:700])
+            # Collect text sample from first 5 pages for classifier (v2: expanded from 3)
+            if page_num < 5 and text:
+                text_sample_parts.append(text[:1000])
 
             # Check for raster images (signals scanned or diagram-heavy)
             img_list = page.get_images(full=False)

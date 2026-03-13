@@ -7,6 +7,7 @@
   <meta name="description" content="Pipeline local de procesamiento de documentos: detección de layout, OCR, ensamblaje Markdown y extracción JSON estructurada." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.0/lib/marked.umd.min.js"></script>
   <style>
     /* ── Reset & Variables ─────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -546,7 +547,7 @@
 
     /* Markdown panel */
     .md-content {
-      max-width: 720px;
+      max-width: 960px;
       margin: 0 auto;
       font-size: 14px;
       line-height: 1.8;
@@ -565,6 +566,47 @@
     .md-content code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: var(--bg-card); padding: 2px 6px; border-radius: 4px; color: var(--cyan); }
     .md-content pre { background: var(--bg-card); padding: 16px; border-radius: var(--radius); overflow-x: auto; border: 1px solid var(--border); }
     .md-content pre code { background: none; padding: 0; }
+    .md-content em { color: var(--text-muted); font-style: italic; }
+    .md-content hr { border: none; border-top: 2px dashed var(--border-hover); margin: 32px 0; }
+    .md-content img { max-width: 100%; border-radius: var(--radius); border: 1px solid var(--border); }
+
+    /* Page separator markers from full-page renderer */
+    .page-separator {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin: 40px 0 24px;
+      padding: 12px 0;
+    }
+    .page-separator::before, .page-separator::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border-hover), transparent);
+    }
+    .page-separator-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-muted);
+      background: var(--bg-card);
+      padding: 4px 14px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    /* Better table overflow */
+    .md-content .table-wrap {
+      overflow-x: auto;
+      margin: 16px 0;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+    .md-content table {
+      min-width: 100%;
+    }
 
     /* JSON panel */
     .json-viewer {
@@ -886,8 +928,8 @@ let currentTab = 'markdown';
 let cachedResult = null;
 let cachedMarkdown = null;
 
-const STAGE_ICONS = ['🧭','🔍','✂️','⚡','🧠'];
-const STAGE_NAMES = ['Intake','Layout','Split','Extracción','Consolida'];
+const STAGE_ICONS = ['🧭','🔍','✂️','⚡','🧠','📝'];
+const STAGE_NAMES = ['Intake','Layout','Split','Extracción','Consolida','Markdown'];
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -1148,21 +1190,29 @@ function renderMarkdown(md) {
       '<p style="color:var(--text-muted)">No hay contenido Markdown disponible.</p>';
     return;
   }
-  // Lightweight MD → HTML
-  const html = md
-    .replace(/^#{1}\s(.+)/gm,  '<h1>$1</h1>')
-    .replace(/^#{2}\s(.+)/gm,  '<h2>$1</h2>')
-    .replace(/^#{3}\s(.+)/gm,  '<h3>$1</h3>')
-    .replace(/\*\*(.*?)\*\*/g,  '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g,      '<code>$1</code>')
-    .replace(/^\|\s(.+)/gm,     '<table><tr><td>$1</td></tr></table>')
-    .replace(/^- (.+)/gm,       '<li>$1</li>')
-    .replace(/(<li>.+<\/li>\n?)+/g, '<ul>$&</ul>')
-    .replace(/\$\$([\s\S]*?)\$\$/g, '<pre><code>$1</code></pre>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/^(?!<[huptl])/gm, '');
-  document.getElementById('md-content-area').innerHTML =
-    `<div class="fade-in">${html}</div>`;
+
+  // Transform page separators {0}---  into styled dividers
+  let processed = md.replace(/\{(\d+)\}\s*\n-{4,}/g, (_, num) => {
+    return `\n<div class="page-separator"><span class="page-separator-label">📄 Página ${parseInt(num) + 1}</span></div>\n`;
+  });
+
+  // Use marked.js for proper markdown rendering
+  if (typeof marked !== 'undefined') {
+    marked.setOptions({
+      breaks: true,
+      gfm: true,
+    });
+    const html = marked.parse(processed);
+    // Wrap tables in scrollable containers
+    const wrappedHtml = html.replace(/<table>/g, '<div class="table-wrap"><table>').replace(/<\/table>/g, '</table></div>');
+    document.getElementById('md-content-area').innerHTML =
+      `<div class="fade-in">${wrappedHtml}</div>`;
+  } else {
+    // Fallback if marked.js didn't load
+    const escaped = processed.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    document.getElementById('md-content-area').innerHTML =
+      `<div class="fade-in" style="white-space:pre-wrap;font-family:monospace;font-size:13px">${escaped}</div>`;
+  }
 }
 
 function renderChunks(chunks) {

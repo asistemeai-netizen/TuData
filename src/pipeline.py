@@ -56,6 +56,7 @@ from src.splitter.content_splitter import ContentSplitter, ContentSplit
 from src.extractors.text_extractor import NativeTextExtractor, OcrTextExtractor
 from src.extractors.table_extractor import CamelotTableExtractor, GeminiTableExtractor, TableData
 from src.extractors.figure_extractor import FigureAnalyzer, FigureData
+from src.extractors.page_renderer import FullPageRenderer
 from src.consolidation.consolidator import Consolidator
 from src.consolidation.project_schemas import ProjectDocument
 
@@ -122,6 +123,7 @@ class DocumentPipeline:
             self._gemini_table= GeminiTableExtractor() if os.getenv("GEMINI_API_KEY") else None
             self._figure_ai   = FigureAnalyzer() if os.getenv("GEMINI_API_KEY") else None
             self._consolidator= Consolidator()
+            self._page_renderer = FullPageRenderer() if os.getenv("GEMINI_API_KEY") else None
 
         logger.success("Pipeline ready (v2={}).".format(use_v2))
 
@@ -280,19 +282,34 @@ class DocumentPipeline:
             f"Line items: {len(project_doc.line_items)} | "
             f"Missing critical: {missing_critical}"
         )
-        _log(f"✅ Pipeline v2 complete: {pdf_path.name}")
 
         # Save JSON
         import json
         json_path = self._output_dir / f"{doc_id}.json"
         json_path.write_text(project_doc.model_dump_json(indent=2), encoding="utf-8")
 
-        # Also build legacy Markdown (for display)
-        all_text_blocks = sorted(text_blocks, key=lambda b: (b.page, b.bbox.y1, b.bbox.x1))
-        sorted_all = self._resolver.sort(all_text_blocks)
-        markdown = self._builder.build(sorted_all, doc_title=doc_id.replace("_", " ").title())
-        md_path = self._output_dir / f"{doc_id}.md"
-        self._builder.save(markdown, md_path)
+        # ── Stage 5: Full-Page Markdown Rendering ─────────────────────────────
+        if progress_callback: progress_callback(5)
+        _log("▶ [Stage 5] Full-Page Markdown Rendering (Gemini Vision) ...")
+        if self._page_renderer:
+            full_markdown = self._page_renderer.render_document(
+                page_images=page_images,
+                doc_type=project_type.value,
+                log_callback=_log,
+            )
+            md_path = self._output_dir / f"{doc_id}.md"
+            md_path.write_text(full_markdown, encoding="utf-8")
+            _log(f"  [Markdown] ✓ Full-page markdown saved ({len(full_markdown)} chars)")
+        else:
+            # Fallback: legacy block-based builder (lower quality)
+            _log("  [Markdown] No API key — falling back to legacy builder")
+            all_text_blocks = sorted(text_blocks, key=lambda b: (b.page, b.bbox.y1, b.bbox.x1))
+            sorted_all = self._resolver.sort(all_text_blocks)
+            markdown = self._builder.build(sorted_all, doc_title=doc_id.replace("_", " ").title())
+            md_path = self._output_dir / f"{doc_id}.md"
+            self._builder.save(markdown, md_path)
+
+        _log(f"✅ Pipeline v2 complete: {pdf_path.name}")
 
         return project_doc
 
@@ -389,7 +406,12 @@ class DocumentPipeline:
         project_type: ProjectType,
         _log,
     ) -> list[FigureData]:
-        """Analyze figure blocks with Gemini Vision (context-aware)."""
+        """Analyze figure blocks with Gemini Vision (context-aware).
+        
+        v2 improvements:
+        - Passes nearby caption text as context for better identification
+        - Sends full page image alongside the crop for surrounding context
+        """
         figure_blocks = split.figure_blocks
         if not figure_blocks:
             return []
@@ -400,12 +422,19 @@ class DocumentPipeline:
             _log("  [Figures] FigureAnalyzer not available (no API key)")
             return []
 
+        # Build caption map: find Caption blocks near each Figure block
+        caption_map = self._build_caption_map(split.text_blocks, figure_blocks)
+
         loop = asyncio.get_running_loop()
         tasks = []
         for block in figure_blocks:
-            crop = self._crop_block(page_images[block.page], block, padding=15)
+            crop = self._crop_block(page_images[block.page], block, padding=20)
+            caption = caption_map.get(block.id)
+            page_img = page_images[block.page]
             tasks.append(
-                loop.run_in_executor(None, self._figure_ai.analyze, crop, block, project_type)
+                loop.run_in_executor(
+                    None, self._figure_ai.analyze, crop, block, project_type, caption, page_img
+                )
             )
         figure_data = list(await asyncio.gather(*tasks))
         _log(f"  [Figures] ✓ {len(figure_data)} figures analyzed")
@@ -633,12 +662,45 @@ class DocumentPipeline:
         return pages
 
     @staticmethod
-    def _crop_block(page_image: Image.Image, block: Block, padding: int = 10) -> Image.Image:
+    def _crop_block(page_image: Image.Image, block: Block, padding: int = 15) -> Image.Image:
         x1 = max(0, int(block.bbox.x1) - padding)
         y1 = max(0, int(block.bbox.y1) - padding)
         x2 = min(page_image.width,  int(block.bbox.x2) + padding)
         y2 = min(page_image.height, int(block.bbox.y2) + padding)
         return page_image.crop((x1, y1, x2, y2))
+
+    @staticmethod
+    def _build_caption_map(
+        text_blocks: list[Block],
+        figure_blocks: list[Block],
+    ) -> dict[int, str]:
+        """
+        Find Caption blocks near each Figure block on the same page.
+        Returns a mapping of figure block_id -> caption text.
+        """
+        from src.models import BlockLabel
+
+        caption_blocks = [b for b in text_blocks if b.label == BlockLabel.CAPTION and b.text]
+        caption_map: dict[int, str] = {}
+
+        for fig in figure_blocks:
+            best_caption = None
+            best_distance = float("inf")
+            for cap in caption_blocks:
+                if cap.page != fig.page:
+                    continue
+                # Vertical distance from bottom of figure to top of caption (or vice versa)
+                dist = min(
+                    abs(fig.bbox.y2 - cap.bbox.y1),  # caption below figure
+                    abs(cap.bbox.y2 - fig.bbox.y1),  # caption above figure
+                )
+                if dist < best_distance:
+                    best_distance = dist
+                    best_caption = cap.text
+            if best_caption and best_distance < 200:  # within ~200 pixels
+                caption_map[fig.id] = best_caption
+
+        return caption_map
 
     @staticmethod
     def _try_init_gemini_ocr() -> Optional[GeminiVisionOCR]:

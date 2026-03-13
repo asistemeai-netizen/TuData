@@ -51,9 +51,9 @@ class NativeTextExtractor:
         # Get all words with their bboxes from PyMuPDF
         words = page.get_text("words")  # (x0, y0, x1, y1, "word", block_no, line_no, word_no)
         
-        # Scale factor: blocks are in image pixels (150dpi), page coords are in pts
-        # We need to know the render scale that was used — default is 150/72
-        scale = 150.0 / 72.0
+        # Scale factor: blocks are in image pixels (200dpi), page coords are in pts
+        # Must match the DPI used in LayoutDetector (v2: 200 DPI)
+        scale = 200.0 / 72.0
 
         for block in blocks:
             # Convert block bbox from image pixels back to PDF points

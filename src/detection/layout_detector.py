@@ -60,7 +60,7 @@ class LayoutDetector:
         self,
         model_path: Optional[str] = None,
         confidence: float = 0.35,
-        dpi: int = 150,
+        dpi: int = 200,       # v2: increased from 150 for better technical diagram detection
     ) -> None:
         # Lazy import to avoid slow startup when module is imported but not used
         from ultralytics import YOLO  # type: ignore

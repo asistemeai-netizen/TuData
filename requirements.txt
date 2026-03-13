@@ -18,7 +18,7 @@ paddlepaddle>=3.0.0           # PaddlePaddle CPU wheel
 paddleocr>=3.0.0              # PP-OCRv5 + PP-StructureV3
 
 # ── LLM / Vision fallback + Extraction (Forge Extract) ────
-google-generativeai>=0.8.0    # Gemini 2.0 Flash SDK
+google-genai>=0.1.0           # Gemini 2.0 Flash SDK
 pydantic>=2.7.0               # Strict schema enforcement
 
 # ── Async orchestration & CLI ──────────────────────────────
